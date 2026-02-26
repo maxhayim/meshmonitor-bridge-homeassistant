@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # mm_meta:
-#   name: Home Assistant Bridge
+#   name: Homeassistant Bridge
 #   emoji: 🏘️
 #   language: Python
-#   description: Bidirectional Home Assistant ↔ MeshMonitor bridge via MQTT (state events + command execution).
+#   description: Bidirectional Home Assistant ↔ MeshMonitor bridge via MQTT (state events + command execution) with MQTT health heartbeat.
 __version__ = "1.0.0"
 
 import asyncio
@@ -160,8 +160,12 @@ def is_allowed(
 
 
 # ============================================================
-# Globals
+# Globals / Health
 # ============================================================
+
+START_TIME = int(time.time())
+MQTT_CONNECTED = False
+HA_CONNECTED = False
 
 MQTT_CMD_QUEUE: "asyncio.Queue[Tuple[str, str]]" = asyncio.Queue()
 HA_WS: Optional[websockets.WebSocketClientProtocol] = None
@@ -188,10 +192,18 @@ def mqtt_connect() -> mqtt.Client:
         client.tls_set()
 
     def on_connect(c, userdata, flags, reason_code, properties):
+        global MQTT_CONNECTED
         if reason_code == 0:
+            MQTT_CONNECTED = True
             logging.info("MQTT connected to %s:%s", host, port)
         else:
+            MQTT_CONNECTED = False
             logging.error("MQTT connect failed: %s", reason_code)
+
+    def on_disconnect(c, userdata, disconnect_flags, reason_code, properties):
+        global MQTT_CONNECTED
+        MQTT_CONNECTED = False
+        logging.warning("MQTT disconnected: %s", reason_code)
 
     def on_message(c, userdata, msg):
         try:
@@ -201,6 +213,7 @@ def mqtt_connect() -> mqtt.Client:
             pass
 
     client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
     client.on_message = on_message
 
     client.connect(host, port, keepalive=60)
@@ -209,7 +222,40 @@ def mqtt_connect() -> mqtt.Client:
 
 
 # ============================================================
-# HA Service Calls
+# Health Heartbeat
+# ============================================================
+
+async def heartbeat_task(client: mqtt.Client, interval_s: int, status_topic: str, version_topic: str):
+    # Publish version once (retained)
+    try:
+        client.publish(
+            version_topic,
+            json.dumps({"app": "homeassistant-bridge", "version": __version__, "ts": int(time.time())}),
+            retain=True,
+        )
+    except Exception:
+        pass
+
+    while True:
+        try:
+            uptime = int(time.time()) - START_TIME
+            payload = {
+                "app": "homeassistant-bridge",
+                "version": __version__,
+                "ha_connected": HA_CONNECTED,
+                "mqtt_connected": MQTT_CONNECTED,
+                "uptime_seconds": uptime,
+                "ts": int(time.time()),
+            }
+            client.publish(status_topic, json.dumps(payload), retain=True)
+        except Exception:
+            pass
+
+        await asyncio.sleep(max(5, interval_s))
+
+
+# ============================================================
+# HA Service Calls (optional command execution)
 # ============================================================
 
 async def ha_call_service(domain: str, service: str, service_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -237,6 +283,64 @@ async def ha_call_service(domain: str, service: str, service_data: Dict[str, Any
                 return resp
 
 
+async def command_consumer(
+    client: mqtt.Client,
+    cmd_topic: str,
+    ack_topic: str,
+    err_topic: str,
+    allow_domain: Optional[re.Pattern],
+    allow_service: Optional[re.Pattern],
+    allow_entity: Optional[re.Pattern],
+):
+    while True:
+        _topic, payload_s = await MQTT_CMD_QUEUE.get()
+
+        request_id = ""
+        try:
+            cmd = json.loads(payload_s)
+            if not isinstance(cmd, dict):
+                raise ValueError("Command payload must be a JSON object")
+
+            request_id = str(cmd.get("request_id") or "")
+            domain = str(cmd.get("domain") or "").strip()
+            service = str(cmd.get("service") or "").strip()
+            service_data = cmd.get("service_data") or {}
+
+            if not domain or not service:
+                raise ValueError("domain and service are required")
+
+            if not isinstance(service_data, dict):
+                raise ValueError("service_data must be a JSON object")
+
+            ent = service_data.get("entity_id")
+            ent_id = None
+            if isinstance(ent, str):
+                ent_id = ent
+            elif isinstance(ent, list) and ent and isinstance(ent[0], str):
+                ent_id = ent[0]
+
+            if not is_allowed(domain, service, ent_id, allow_domain, allow_service, allow_entity):
+                raise PermissionError(f"Denied by allowlist: {domain}.{service} entity={ent_id}")
+
+            resp = await ha_call_service(domain, service, service_data)
+            ok = bool(resp.get("success", False))
+
+            publish_json(
+                client,
+                ack_topic,
+                {"request_id": request_id, "ok": ok, "response": resp, "ts": int(time.time())},
+                retain=False,
+            )
+
+        except Exception as e:
+            publish_json(
+                client,
+                err_topic,
+                {"request_id": request_id, "ok": False, "error": str(e), "ts": int(time.time())},
+                retain=False,
+            )
+
+
 # ============================================================
 # Main Bridge
 # ============================================================
@@ -259,6 +363,8 @@ async def run_bridge() -> int:
     alert_root = os.getenv("ALERT_ROOT", "meshmonitor/alerts/homeassistant").rstrip("/")
     retain = env_bool("PUBLISH_RETAIN", False)
 
+    enable_alerts = env_bool("ENABLE_ALERT_TOPICS", True)
+
     enable_cmd = env_bool("ENABLE_COMMANDS", False)
     cmd_topic = os.getenv("COMMAND_TOPIC", f"{topic_root}/cmd/service")
     ack_topic = os.getenv("ACK_TOPIC", f"{topic_root}/cmd/ack")
@@ -268,25 +374,40 @@ async def run_bridge() -> int:
     allow_service = compile_optional_regex("ALLOW_SERVICE_REGEX")
     allow_entity = compile_optional_regex("ALLOW_ENTITY_REGEX")
 
+    # Heartbeat topics + interval
+    heartbeat_seconds = env_int("HEARTBEAT_SECONDS", 30)
+    status_topic = os.getenv("STATUS_TOPIC", f"{topic_root}/status").strip()
+    version_topic = os.getenv("VERSION_TOPIC", f"{topic_root}/version").strip()
+
     client = mqtt_connect()
+
+    # Start heartbeat (retained status/version)
+    asyncio.create_task(heartbeat_task(client, heartbeat_seconds, status_topic, version_topic))
 
     if enable_cmd:
         client.subscribe(cmd_topic)
         logging.info("Command channel enabled: %s", cmd_topic)
 
-    global HA_WS
+    global HA_WS, HA_CONNECTED
 
-    logging.info("meshmonitor-bridge-homeassistant v%s starting", __version__)
+    logging.info("homeassistant-bridge v%s starting (ws=%s)", __version__, ws_url)
 
     while True:
+        consumer_task: Optional[asyncio.Task] = None
+
         try:
-            async with websockets.connect(ws_url) as ws:
+            async with websockets.connect(ws_url, ping_interval=20, ping_timeout=20) as ws:
                 HA_WS = ws
 
                 # Auth handshake
-                await ws.recv()
+                first = json.loads(await ws.recv())
+                if first.get("type") != "auth_required":
+                    logging.warning("Unexpected first WS message: %s", first)
+
                 await ws.send(json.dumps({"type": "auth", "access_token": ha_token}))
-                await ws.recv()
+                auth = json.loads(await ws.recv())
+                if auth.get("type") != "auth_ok":
+                    raise RuntimeError(f"HA auth failed: {auth}")
 
                 # Subscribe state_changed
                 await ws.send(json.dumps({
@@ -294,9 +415,17 @@ async def run_bridge() -> int:
                     "type": "subscribe_events",
                     "event_type": "state_changed"
                 }))
-                await ws.recv()
+                sub = json.loads(await ws.recv())
+                if not (sub.get("id") == 1 and sub.get("success") is True):
+                    raise RuntimeError(f"HA subscribe failed: {sub}")
 
-                logging.info("Connected to Home Assistant WS")
+                HA_CONNECTED = True
+                logging.info("Connected to Home Assistant WS and subscribed to state_changed")
+
+                if enable_cmd:
+                    consumer_task = asyncio.create_task(
+                        command_consumer(client, cmd_topic, ack_topic, err_topic, allow_domain, allow_service, allow_entity)
+                    )
 
                 while True:
                     raw = await ws.recv()
@@ -318,25 +447,37 @@ async def run_bridge() -> int:
 
                     publish_json(client, f"{base}/state", norm, retain)
 
-                    alert = classify_alert(entity_id, norm)
-                    if alert:
-                        kind, level, message = alert
-                        publish_json(
-                            client,
-                            f"{alert_root}/{kind}",
-                            {
-                                "source": "homeassistant",
-                                "entity_id": entity_id,
-                                "level": level,
-                                "message": message,
-                                "ts": int(time.time())
-                            },
-                            False
-                        )
+                    if enable_alerts:
+                        alert = classify_alert(entity_id, norm)
+                        if alert:
+                            kind, level, message = alert
+                            publish_json(
+                                client,
+                                f"{alert_root}/{kind}",
+                                {
+                                    "source": "homeassistant",
+                                    "entity_id": entity_id,
+                                    "level": level,
+                                    "message": message,
+                                    "ts": int(time.time())
+                                },
+                                False
+                            )
 
         except Exception as e:
+            HA_CONNECTED = False
+            HA_WS = None
             logging.error("Bridge error: %s", e)
             await asyncio.sleep(5)
+        finally:
+            HA_CONNECTED = False
+            HA_WS = None
+            if consumer_task:
+                consumer_task.cancel()
+                try:
+                    await consumer_task
+                except Exception:
+                    pass
 
 
 def main() -> int:
