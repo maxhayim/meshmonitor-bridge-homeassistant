@@ -1,0 +1,15 @@
+[Unit]
+Description=Homeassistant Bridge 
+After=network.target
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/meshmonitor/homeassistant-bridge.env
+ExecStart=/usr/local/sbin/homeassistant-bridge
+Restart=always
+RestartSec=5
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target
