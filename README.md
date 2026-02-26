@@ -9,7 +9,7 @@
 
 # 🏘️ Homeassistant Bridge
 
-Homeassistant Bridge is a lightweight Python MeshMonitor bridge that connects Home Assistant to MeshMonitor using MQTT.
+Homeassistant Bridge is a lightweight Python [**MeshMonitor**](https://github.com/Yeraze/MeshMonitor) Bridge script that connects [**Home Assistant**](https://www.home-assistant.io/) to MeshMonitor ([**Meshtastic**](https://meshtastic.org/)) using MQTT.
 
 Home Assistant handles:
 - Devices
@@ -272,7 +272,7 @@ Full license text: https://opensource.org/licenses/MIT
 ## Acknowledgments
 
 * MeshMonitor built by [Yeraze](https://github.com/Yeraze)
-* Home Assistant (Open Home Foundation)  
-* Eclipse Mosquitto (MQTT reference broker) 
+* [Home Assistant](https://www.home-assistant.io/)  
+* [Eclipse Mosquitto)](https://mosquitto.org/) 
 
 Discover other community-contributed scripts for MeshMonitor: https://meshmonitor.org/user-scripts.html
