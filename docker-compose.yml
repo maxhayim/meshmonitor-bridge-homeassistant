@@ -1,0 +1,7 @@
+services:
+  homeassistant-bridge:
+    image: ghcr.io/dziban303/meshmonitor-bridge-homeassistant:latest
+    container_name: homeassistant-bridge
+    restart: unless-stopped
+    env_file:
+      - homeassistant-bridge.env
