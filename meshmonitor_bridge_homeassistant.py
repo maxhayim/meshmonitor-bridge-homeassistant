@@ -4,7 +4,7 @@
 #   emoji: 🏘️
 #   language: Python
 #   description: Bidirectional Home Assistant ↔ MeshMonitor bridge via MQTT (state events + command execution) with MQTT health heartbeat.
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 
 import asyncio
 import json
