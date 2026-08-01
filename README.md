@@ -133,7 +133,7 @@ journalctl -u homeassistant-bridge.service -f
 
 ### 1) Pull
 
-docker pull ghcr.io/dziban303/meshmonitor-bridge-homeassistant:latest
+docker pull ghcr.io/maxhayim/meshmonitor-bridge-homeassistant:latest
 
 ---
 
@@ -151,7 +151,7 @@ docker run -d \\
   --name homeassistant-bridge \\
   --restart unless-stopped \\
   --env-file homeassistant-bridge.env \\
-  ghcr.io/dziban303/meshmonitor-bridge-homeassistant:latest
+  ghcr.io/maxhayim/meshmonitor-bridge-homeassistant:latest
 
 Or with Docker Compose:
 
