@@ -1,0 +1,11 @@
+.git
+.github
+docs
+*.md
+*.env
+homeassistant-bridge.env.example
+homeassistant-bridge.service
+install.sh
+uninstall.sh
+__pycache__
+*.pyc

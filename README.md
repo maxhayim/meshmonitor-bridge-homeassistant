@@ -129,6 +129,42 @@ journalctl -u homeassistant-bridge.service -f
 
 ---
 
+## Docker
+
+### 1) Pull
+
+docker pull ghcr.io/dziban303/meshmonitor-bridge-homeassistant:latest
+
+---
+
+### 2) Configure
+
+cp homeassistant-bridge.env.example homeassistant-bridge.env
+
+Edit homeassistant-bridge.env with your HA_TOKEN, HA_URL, and MQTT settings (same variables as the [Environment Variables](#environment-variables) section below).
+
+---
+
+### 3) Run
+
+docker run -d \\
+  --name homeassistant-bridge \\
+  --restart unless-stopped \\
+  --env-file homeassistant-bridge.env \\
+  ghcr.io/dziban303/meshmonitor-bridge-homeassistant:latest
+
+Or with Docker Compose:
+
+docker compose up -d
+
+Logs:
+
+docker logs -f homeassistant-bridge
+
+The bridge is stateless — no volumes are required beyond the env file.
+
+---
+
 ## Home Assistant Setup
 
 In Home Assistant:
