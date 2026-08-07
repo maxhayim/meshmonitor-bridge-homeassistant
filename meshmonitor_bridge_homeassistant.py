@@ -4,7 +4,7 @@
 #   emoji: 🏘️
 #   language: Python
 #   description: Bidirectional Home Assistant ↔ MeshMonitor bridge via MQTT (state events + command execution) with MQTT health heartbeat.
-__version__ = "2.0.1"
+__version__ = "2.0.2"
 
 import asyncio
 import json
@@ -12,7 +12,6 @@ import logging
 import os
 import re
 import time
-import hashlib
 from typing import Any, Dict, Optional, Tuple
 
 import paho.mqtt.client as mqtt
@@ -54,11 +53,6 @@ def slug(s: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", s)
     s = re.sub(r"-{2,}", "-", s).strip("-")
     return s or "unnamed"
-
-
-def stable_id(*parts: str) -> str:
-    h = hashlib.sha1("||".join(parts).encode("utf-8")).hexdigest()
-    return h[:12]
 
 
 def derive_ws_url() -> str:

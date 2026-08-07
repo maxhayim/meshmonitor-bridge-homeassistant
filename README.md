@@ -235,6 +235,19 @@ Error topic:
  
     meshmonitor/homeassistant/cmd/error
  
+Each of these three topics can be overridden independently via `COMMAND_TOPIC`, `ACK_TOPIC`, and `ERROR_TOPIC`.
+ 
+---
+ 
+### Health Heartbeat
+ 
+Published on a timer (`HEARTBEAT_SECONDS`, default 30s), retained:
+ 
+    meshmonitor/homeassistant/status
+    meshmonitor/homeassistant/version
+ 
+Override with `STATUS_TOPIC` and `VERSION_TOPIC`.
+ 
 ---
  
 ## Command Safety
@@ -269,6 +282,11 @@ Topics:
  
     TOPIC_ROOT=meshmonitor/homeassistant
     ALERT_ROOT=meshmonitor/alerts/homeassistant
+    COMMAND_TOPIC= (default: {TOPIC_ROOT}/cmd/service)
+    ACK_TOPIC= (default: {TOPIC_ROOT}/cmd/ack)
+    ERROR_TOPIC= (default: {TOPIC_ROOT}/cmd/error)
+    STATUS_TOPIC= (default: {TOPIC_ROOT}/status)
+    VERSION_TOPIC= (default: {TOPIC_ROOT}/version)
  
 Behavior:
  
