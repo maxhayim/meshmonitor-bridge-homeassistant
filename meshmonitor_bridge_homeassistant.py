@@ -4,7 +4,7 @@
 #   emoji: 🏘️
 #   language: Python
 #   description: Bidirectional Home Assistant ↔ MeshMonitor bridge via MQTT (state events + command execution) with MQTT health heartbeat.
-__version__ = "2.0.0"
+__version__ = "1.0.1"
 
 import asyncio
 import json
@@ -171,6 +171,7 @@ MQTT_CMD_QUEUE: "asyncio.Queue[Tuple[str, str]]" = asyncio.Queue()
 HA_WS: Optional[websockets.WebSocketClientProtocol] = None
 HA_SEND_LOCK = asyncio.Lock()
 NEXT_HA_ID = 100
+HA_PENDING: Dict[int, "asyncio.Future[Dict[str, Any]]"] = {}
 
 
 # ============================================================
@@ -267,6 +268,8 @@ async def ha_call_service(domain: str, service: str, service_data: Dict[str, Any
     async with HA_SEND_LOCK:
         NEXT_HA_ID += 1
         msg_id = NEXT_HA_ID
+        fut: "asyncio.Future[Dict[str, Any]]" = asyncio.get_event_loop().create_future()
+        HA_PENDING[msg_id] = fut
 
         await HA_WS.send(json.dumps({
             "id": msg_id,
@@ -276,11 +279,10 @@ async def ha_call_service(domain: str, service: str, service_data: Dict[str, Any
             "service_data": service_data or {}
         }))
 
-        while True:
-            raw = await HA_WS.recv()
-            resp = json.loads(raw)
-            if resp.get("id") == msg_id:
-                return resp
+    try:
+        return await asyncio.wait_for(fut, timeout=15)
+    finally:
+        HA_PENDING.pop(msg_id, None)
 
 
 async def command_consumer(
@@ -430,6 +432,14 @@ async def run_bridge() -> int:
                 while True:
                     raw = await ws.recv()
                     evt = json.loads(raw)
+
+                    msg_id = evt.get("id")
+                    if msg_id is not None and msg_id in HA_PENDING:
+                        fut = HA_PENDING.get(msg_id)
+                        if fut and not fut.done():
+                            fut.set_result(evt)
+                        continue
+
                     if evt.get("type") != "event":
                         continue
 
@@ -472,6 +482,10 @@ async def run_bridge() -> int:
         finally:
             HA_CONNECTED = False
             HA_WS = None
+            for fut in HA_PENDING.values():
+                if not fut.done():
+                    fut.set_exception(RuntimeError("Home Assistant websocket disconnected"))
+            HA_PENDING.clear()
             if consumer_task:
                 consumer_task.cancel()
                 try:
