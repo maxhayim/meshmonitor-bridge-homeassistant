@@ -1,0 +1,34 @@
+name: Integration Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  api-client:
+    # api.py's own tests, no Home Assistant core test harness involved.
+    # Deliberately NOT combined with the coordinator job below:
+    # pytest-homeassistant-custom-component installs a strict, session-wide
+    # thread-cleanup fixture that misfires on plain aiohttp/aioresponses
+    # tests merely by being present in the same environment.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev-integration.txt
+      - run: python -m pytest tests/test_meshmonitor_integration/test_api.py -v
+
+  coordinator:
+    # Needs real Home Assistant core objects (ConfigEntry, DataUpdateCoordinator,
+    # the `hass` test fixture) via pytest-homeassistant-custom-component.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev-ha.txt
+      - run: python -m pytest tests/test_meshmonitor_integration/test_coordinator.py -v

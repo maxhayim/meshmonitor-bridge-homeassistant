@@ -1,0 +1,28 @@
+# Test-only dependencies for custom_components/meshmonitor/api.py (Phase 2).
+# Kept separate from requirements-dev.txt, which covers the unrelated
+# standalone MQTT bridge script's own test suite (tests/test_bridge.py) and
+# must not be changed by this addition.
+#
+# api.py itself has zero homeassistant.* imports, but it lives inside the
+# custom_components.meshmonitor *package*, whose __init__.py does real
+# `homeassistant.helpers` imports at module scope -- Python always runs a
+# package's __init__.py when importing any of its submodules, so
+# `homeassistant` must be installed here too, even just to import api.py.
+#
+# Deliberately does NOT include pytest-homeassistant-custom-component: that
+# plugin installs a strict, session-wide thread-cleanup autouse fixture that
+# misfires on plain aiohttp/aioresponses tests merely by being present in
+# the same environment (confirmed: bare `homeassistant` alone does not cause
+# this; the plugin does). See requirements-dev-ha.txt for the coordinator
+# tests, which need that plugin's `hass` fixture and must run in a separate
+# environment/CI job from this one.
+#
+# Install with:
+#   pip install -r requirements-dev.txt -r requirements-dev-integration.txt
+#
+# Run with:
+#   pytest tests/test_meshmonitor_integration/test_api.py -v
+-r requirements-dev.txt
+aiohttp>=3.9
+aioresponses>=0.7.6
+homeassistant>=2024.11.0

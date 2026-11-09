@@ -1,0 +1,24 @@
+name: HACS Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 0 * * 0"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Informational, not a merge gate: the "brands" check requires submitting
+      # icon/logo assets to the separate home-assistant/brands repo and getting
+      # them merged there first -- an external review on another org's repo,
+      # appropriate once this integration has some real-world usage, not at
+      # initial release. Until then this check is expected to fail; step-level
+      # continue-on-error (not job-level) is what keeps the job itself green.
+      - uses: hacs/action@main
+        continue-on-error: true
+        with:
+          category: integration

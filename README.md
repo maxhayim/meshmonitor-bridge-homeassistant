@@ -105,11 +105,20 @@ The bridge:
     ├── Dockerfile                            # Container build
     ├── docker-compose.yml                    # Container deployment
     ├── .dockerignore
-    ├── tests/                                # pytest suite (logic + mocked MQTT/WS)
-    ├── requirements-dev.txt                  # Test-only dependencies
+    ├── tests/
+    │   ├── test_bridge.py                    # MQTT bridge pytest suite (logic + mocked MQTT/WS)
+    │   └── test_meshmonitor_integration/     # Native integration pytest suite (api.py + coordinator.py)
+    ├── requirements-dev.txt                  # Test-only deps for the MQTT bridge suite
+    ├── requirements-dev-integration.txt      # Test-only deps for custom_components/meshmonitor/api.py
+    ├── requirements-dev-ha.txt               # Test-only deps for coordinator.py (needs real Home Assistant core)
+    ├── custom_components/meshmonitor/        # Native HA integration (domain "meshmonitor"), see below
+    ├── hacs.json                             # HACS custom-repository manifest
     ├── .github/workflows/
     │   ├── docker-publish.yml                # Multi-arch GHCR build + publish
-    │   └── tests.yml                         # pytest on push/PR
+    │   ├── tests.yml                         # MQTT bridge pytest on push/PR
+    │   ├── integration-tests.yml             # Native integration pytest on push/PR (two isolated jobs, see file comments)
+    │   ├── hassfest.yml                      # Home Assistant manifest validation
+    │   └── hacs.yml                          # HACS repository validation
     ├── docs/assets/                          # Logo and documentation images
     └── README.md
  
@@ -421,7 +430,7 @@ Homeassistant Bridge simply connects them.
 ## Testing
 
     pip install -r requirements-dev.txt
-    pytest tests/ -v
+    pytest tests/test_bridge.py -v
 
 The suite covers command-allowlist edge cases (full entity-list validation,
 area/device/label denial, default-deny with no entity regex), low-battery
@@ -429,14 +438,107 @@ threshold crossing/suppression, the single-reader WebSocket dispatch, and the
 thread-safe MQTT command queue — against mocked MQTT/WebSocket objects, not a
 live Home Assistant or MQTT broker.
 
+The native integration's own tests (`tests/test_meshmonitor_integration/`)
+are separate and deliberately run in two different environments — see
+[Testing](#testing-1) under Native Home Assistant Integration below.
+
+---
+
+## Native Home Assistant Integration
+
+A separate, optional native Home Assistant custom integration lives at
+`custom_components/meshmonitor/` (HA domain `meshmonitor`). Unlike the MQTT
+bridge documented above, it talks directly to MeshMonitor's own REST API
+(`/api/v1/...`) — no MQTT broker, no Home Assistant long-lived token, no
+systemd/Docker service to run. The bridge script and this integration are
+independent, optional deployment options: run either, both, or neither.
+
+### What it provides vs. the MQTT bridge
+
+|  | MQTT Bridge (`meshmonitor_bridge_homeassistant.py`) | Native Integration (`custom_components/meshmonitor/`) |
+|---|---|---|
+| Transport | MQTT between HA and MeshMonitor | Direct REST polling of MeshMonitor's `/api/v1/` |
+| Direction | HA state → MeshMonitor; MeshMonitor commands → HA | MeshMonitor node/channel/telemetry data → HA entities (read-only) |
+| Setup | systemd/Docker service + env file | Copy a folder into `custom_components/`, add via the HA UI |
+| Entities created | None directly (it forwards existing HA entities) | New sensors per MeshMonitor node and per instance |
+| Command execution | Yes, allowlisted HA service calls | No — metrics only |
+
+Per configured MeshMonitor instance, the native integration provides:
+- Instance-level: node count, channel count, a last-update timestamp, and a
+  connectivity binary_sensor — all derived from whether polling is
+  succeeding, since MeshMonitor has no `/health` endpoint.
+- Per-node: SNR, plus whichever of battery level, voltage, channel
+  utilization, air utilization (TX), temperature, humidity, and barometric
+  pressure that node actually reports in its telemetry. No sensor is
+  created for a field a given node never sends.
+- Nodes appear as separate Home Assistant devices grouped under a
+  per-instance hub device, labeled Meshtastic or MeshCore according to the
+  node's real `protocol` field.
+
+### Installation
+
+Manual (works today):
+
+1. Copy `custom_components/meshmonitor/` into your Home Assistant
+   `config/custom_components/` directory.
+2. Restart Home Assistant.
+3. In MeshMonitor's own web UI, open User Settings and generate an API
+   token (`mm_v1_...`). There is no way for the integration to obtain this
+   automatically — MeshMonitor only issues tokens through its own UI.
+4. In Home Assistant: **Settings → Devices & Services → Add Integration →
+   MeshMonitor**. Enter MeshMonitor's host, port, scheme, and the token.
+
+HACS: the repository root includes `hacs.json`, so it's prepared to work as
+a HACS *custom* repository, but it has **not yet been submitted to the HACS
+default store**. Until then, add this repository's GitHub URL as a custom
+repository in HACS, then install "MeshMonitor" from there.
+
+### Known limitations
+
+- No firmware-version or uptime sensors — neither field exists anywhere in
+  MeshMonitor's Node or Telemetry API schema, so none are fabricated here.
+- No automatic discovery — MeshMonitor advertises no Zeroconf/mDNS service,
+  so setup is manual (host/port/scheme/token). Discovery is deferred to a
+  later phase.
+- Each config entry's `unique_id` is a hash of (host, port, API token),
+  since MeshMonitor's API exposes no documented stable instance identifier.
+  Rotating the API token on the MeshMonitor side changes this hash; use the
+  integration's reauth flow (triggered automatically once the stored token
+  stops working) rather than removing and re-adding the integration.
+- Multiple MeshMonitor instances can each be added as their own config
+  entry, but there is no cross-instance dedup or auto-merge logic yet.
+- Read-only — it does not execute Home Assistant service calls or control
+  devices; that remains the MQTT bridge's job via its command channel.
+
+### Testing
+
+    pip install -r requirements-dev-integration.txt
+    pytest tests/test_meshmonitor_integration/test_api.py -v
+
+    pip install -r requirements-dev-ha.txt
+    pytest tests/test_meshmonitor_integration/test_coordinator.py -v
+
+These two run in **separate environments on purpose**. `api.py` has no
+`homeassistant.*` imports of its own, but importing it still pulls in
+`custom_components/meshmonitor/__init__.py` (Python always runs a package's
+`__init__.py` to import any of its submodules), which does real
+`homeassistant.helpers` imports — so `homeassistant` itself is required even
+for the api-only tests. `pytest-homeassistant-custom-component` is not:
+that plugin installs a strict, session-wide thread-cleanup check that
+misfires on plain aiohttp/aioresponses tests merely by being installed in
+the same environment, regardless of whether a given test uses its `hass`
+fixture. The coordinator tests need that plugin's `hass` fixture, so they
+get their own environment instead. CI (`integration-tests.yml`) runs these
+as two separate jobs for the same reason.
+
 ---
 
 ## Known Limitations
 
 - One Home Assistant instance and one MeshMonitor MQTT broker per running
-  bridge process — multi-instance support is not yet implemented.
-- There is no native Home Assistant custom integration (`custom_components/`)
-  yet; this is the standalone MQTT bridge only.
+  bridge process — multi-instance support is not yet implemented for the
+  MQTT bridge (the native integration, documented above, does support
+  multiple config entries).
 - `ALLOW_TARGET_AREA_DEVICE_LABEL=true` does not validate *which* area,
   device, or label was targeted — it only stops blocking that target type.
   Only enable it if you trust everything publishing to the command topic.
