@@ -105,11 +105,20 @@ The bridge:
     ├── Dockerfile                            # Container build
     ├── docker-compose.yml                    # Container deployment
     ├── .dockerignore
-    ├── tests/                                # pytest suite (logic + mocked MQTT/WS)
-    ├── requirements-dev.txt                  # Test-only dependencies
+    ├── tests/
+    │   ├── test_bridge.py                    # MQTT bridge pytest suite (logic + mocked MQTT/WS)
+    │   └── test_meshmonitor_integration/     # Native integration pytest suite (api.py + coordinator.py)
+    ├── requirements-dev.txt                  # Test-only deps for the MQTT bridge suite
+    ├── requirements-dev-integration.txt      # Test-only deps for custom_components/meshmonitor/api.py
+    ├── requirements-dev-ha.txt               # Test-only deps for coordinator.py (needs real Home Assistant core)
+    ├── custom_components/meshmonitor/        # Native HA integration (domain "meshmonitor"), see below
+    ├── hacs.json                             # HACS custom-repository manifest
     ├── .github/workflows/
     │   ├── docker-publish.yml                # Multi-arch GHCR build + publish
-    │   └── tests.yml                         # pytest on push/PR
+    │   ├── tests.yml                         # MQTT bridge pytest on push/PR
+    │   ├── integration-tests.yml             # Native integration pytest on push/PR (two isolated jobs, see file comments)
+    │   ├── hassfest.yml                      # Home Assistant manifest validation
+    │   └── hacs.yml                          # HACS repository validation
     ├── docs/assets/                          # Logo and documentation images
     └── README.md
  
@@ -421,13 +430,17 @@ Homeassistant Bridge simply connects them.
 ## Testing
 
     pip install -r requirements-dev.txt
-    pytest tests/ -v
+    pytest tests/test_bridge.py -v
 
 The suite covers command-allowlist edge cases (full entity-list validation,
 area/device/label denial, default-deny with no entity regex), low-battery
 threshold crossing/suppression, the single-reader WebSocket dispatch, and the
 thread-safe MQTT command queue — against mocked MQTT/WebSocket objects, not a
 live Home Assistant or MQTT broker.
+
+The native integration's own tests (`tests/test_meshmonitor_integration/`)
+are separate and deliberately run in two different environments — see
+[Testing](#testing-1) under Native Home Assistant Integration below.
 
 ---
 
@@ -496,6 +509,27 @@ repository in HACS, then install "MeshMonitor" from there.
   entry, but there is no cross-instance dedup or auto-merge logic yet.
 - Read-only — it does not execute Home Assistant service calls or control
   devices; that remains the MQTT bridge's job via its command channel.
+
+### Testing
+
+    pip install -r requirements-dev-integration.txt
+    pytest tests/test_meshmonitor_integration/test_api.py -v
+
+    pip install -r requirements-dev.txt -r requirements-dev-ha.txt
+    pytest tests/test_meshmonitor_integration/test_coordinator.py -v
+
+These two run in **separate environments on purpose**. `api.py` has no
+`homeassistant.*` imports of its own, but importing it still pulls in
+`custom_components/meshmonitor/__init__.py` (Python always runs a package's
+`__init__.py` to import any of its submodules), which does real
+`homeassistant.helpers` imports — so `homeassistant` itself is required even
+for the api-only tests. `pytest-homeassistant-custom-component` is not:
+that plugin installs a strict, session-wide thread-cleanup check that
+misfires on plain aiohttp/aioresponses tests merely by being installed in
+the same environment, regardless of whether a given test uses its `hass`
+fixture. The coordinator tests need that plugin's `hass` fixture, so they
+get their own environment instead. CI (`integration-tests.yml`) runs these
+as two separate jobs for the same reason.
 
 ---
 

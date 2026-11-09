@@ -24,4 +24,7 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run tests
-        run: python -m pytest tests/ -v --asyncio-mode=auto
+        # Scoped explicitly: tests/test_meshmonitor_integration/ belongs to
+        # the separate native integration (see integration-tests.yml) and
+        # needs its own, different dependency sets installed.
+        run: python -m pytest tests/test_bridge.py -v --asyncio-mode=auto

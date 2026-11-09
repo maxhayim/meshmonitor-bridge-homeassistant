@@ -23,6 +23,12 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+# Max number of *already-known* nodes whose telemetry is refetched per poll
+# cycle, on top of any brand-new nodes (always refetched immediately). Caps
+# per-cycle request count on a large mesh while still refreshing every
+# node's telemetry over time via round robin (see _async_update_data).
+TELEMETRY_REFRESH_BATCH_SIZE = 5
+
 
 @dataclass
 class MeshMonitorData:
@@ -60,6 +66,10 @@ class MeshMonitorCoordinator(DataUpdateCoordinator[MeshMonitorData]):
         # so the "last update" sensor in sensor.py has a concrete timestamp
         # to show, since MeshMonitor has no /health endpoint to poll for one.
         self.last_success_time: datetime | None = None
+        # node_id -> when its telemetry was last fetched; drives the
+        # round-robin refresh in _async_update_data. Bookkeeping only, not
+        # exposed data, so it lives on the coordinator rather than MeshMonitorData.
+        self._telemetry_fetched_at: dict[str, datetime] = {}
 
     async def _async_update_data(self) -> MeshMonitorData:
         try:
@@ -80,31 +90,38 @@ class MeshMonitorCoordinator(DataUpdateCoordinator[MeshMonitorData]):
         existing = self.data
         telemetry_by_node = dict(existing.telemetry_by_node) if existing else {}
 
-        # Keep per-node telemetry reasonably fresh without issuing one
-        # request per node on every single poll: refresh telemetry only for
-        # nodes we don't have cached data for yet, plus a slow rotating
-        # refresh of already-known nodes handled implicitly as nodes churn
-        # in/out of the node list. This keeps steady-state polling cheap on
-        # large meshes while still populating telemetry for new nodes
-        # promptly.
+        # Keep per-node telemetry fresh without issuing one request per node
+        # on every single poll: brand-new nodes are always refetched
+        # immediately, and a bounded batch of the stalest already-known
+        # nodes is refetched each cycle (round robin), so every node's
+        # telemetry keeps updating over time instead of freezing at its
+        # first-ever reading.
         node_ids = {self._node_id(node) for node in nodes if self._node_id(node)}
-        for node_id in node_ids:
-            if node_id in telemetry_by_node:
-                continue
+
+        new_ids = [n for n in node_ids if n not in telemetry_by_node]
+        known_ids_by_age = sorted(
+            (n for n in node_ids if n in telemetry_by_node),
+            key=lambda n: self._telemetry_fetched_at.get(n, dt_util.utcnow()),
+        )
+        to_refresh = new_ids + known_ids_by_age[:TELEMETRY_REFRESH_BATCH_SIZE]
+
+        for node_id in to_refresh:
             try:
                 telemetry_by_node[node_id] = await self.client.async_get_node_telemetry(
                     node_id
                 )
+                self._telemetry_fetched_at[node_id] = dt_util.utcnow()
             except MeshMonitorAuthError as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
             except (MeshMonitorConnectionError, MeshMonitorResponseError) as err:
                 _LOGGER.debug("Failed to fetch telemetry for node %s: %s", node_id, err)
-                telemetry_by_node[node_id] = []
+                telemetry_by_node.setdefault(node_id, [])
 
-        # Drop telemetry for nodes that no longer exist.
+        # Drop telemetry (and refresh bookkeeping) for nodes that no longer exist.
         for stale_id in list(telemetry_by_node):
             if stale_id not in node_ids:
                 telemetry_by_node.pop(stale_id, None)
+                self._telemetry_fetched_at.pop(stale_id, None)
 
         self.last_success_time = dt_util.utcnow()
         return MeshMonitorData(

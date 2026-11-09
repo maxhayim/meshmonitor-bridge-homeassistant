@@ -2,12 +2,19 @@
 
 Scope: this exercises MeshMonitorApiClient's request/response/error
 handling against mocked HTTP responses (via aioresponses), with no real
-MeshMonitor instance and no Home Assistant core involved -- api.py itself
-has no homeassistant.* imports, so it can be tested in isolation.
+MeshMonitor instance involved. api.py itself has no homeassistant.*
+imports, but importing it still runs custom_components/meshmonitor/__init__.py
+(Python always runs a package's __init__.py to import any of its
+submodules), which does real homeassistant.helpers imports -- so
+`homeassistant` must be installed to even collect this file (see
+requirements-dev-integration.txt). It does NOT need
+pytest-homeassistant-custom-component or a `hass` fixture, which is the
+actual isolation this test file cares about -- see that requirements file's
+comment for why mixing the two causes a (unrelated) thread-cleanup false positive.
 
 NOT covered here (deferred / out of scope for this test file):
-- config_flow.py / coordinator.py / __init__.py wiring against a real HA
-  core instance (would need pytest-homeassistant-custom-component).
+- config_flow.py / __init__.py wiring against a real HA core instance
+  (coordinator.py itself is covered by test_coordinator.py).
 - entity.py / sensor.py / binary_sensor.py entity behavior.
 See the Phase 2 report for what that implies is still untested.
 """

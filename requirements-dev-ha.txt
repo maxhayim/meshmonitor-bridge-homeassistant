@@ -1,0 +1,13 @@
+# Test-only dependencies for custom_components/meshmonitor/coordinator.py
+# (and anything else needing real Home Assistant core objects, e.g. a
+# future config_flow/entity test). Deliberately NOT combined with
+# requirements-dev-integration.txt in the same environment/CI job -- see
+# that file's comment for why.
+#
+# Install with:
+#   pip install -r requirements-dev-ha.txt
+#
+# Run with:
+#   pytest tests/test_meshmonitor_integration/test_coordinator.py -v
+homeassistant>=2024.11.0
+pytest-homeassistant-custom-component
