@@ -1,0 +1,14 @@
+# Test-only dependencies for the native Home Assistant integration at
+# custom_components/meshmonitor/ (Phase 2). Kept separate from
+# requirements-dev.txt, which covers the unrelated standalone MQTT bridge
+# script's own test suite (tests/test_bridge.py) and must not be changed
+# by this addition.
+#
+# Install with:
+#   pip install -r requirements-dev.txt -r requirements-dev-integration.txt
+#
+# Run with:
+#   pytest tests/test_meshmonitor_integration/ -v
+-r requirements-dev.txt
+aiohttp>=3.9
+aioresponses>=0.7.6

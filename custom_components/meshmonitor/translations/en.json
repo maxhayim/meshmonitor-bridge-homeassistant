@@ -1,0 +1,61 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to MeshMonitor",
+        "description": "Enter the connection details for your MeshMonitor instance. Generate an API token from MeshMonitor's own web UI under User Settings, then paste it here.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "scheme": "Scheme (http/https)",
+          "api_token": "API token",
+          "name": "Name (optional)"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate MeshMonitor",
+        "description": "The API token for this MeshMonitor instance no longer works (it may have been rotated or revoked). Paste a new token from MeshMonitor's User Settings page.",
+        "data": {
+          "api_token": "API token"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "The API token was rejected by MeshMonitor. Check that you copied it correctly and that it hasn't been revoked.",
+      "cannot_connect": "Could not reach MeshMonitor at that host/port/scheme. Check the connection details and that MeshMonitor is running.",
+      "unknown": "MeshMonitor responded, but not in the shape expected. Check that this is a MeshMonitor instance and that the version is supported."
+    },
+    "abort": {
+      "already_configured": "This MeshMonitor instance is already configured.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "MeshMonitor options",
+        "data": {
+          "scan_interval": "Polling interval (seconds)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "node_count": { "name": "Node count" },
+      "channel_count": { "name": "Channel count" },
+      "last_update": { "name": "Last update" },
+      "battery_level": { "name": "Battery" },
+      "voltage": { "name": "Voltage" },
+      "channel_utilization": { "name": "Channel utilization" },
+      "air_util_tx": { "name": "Air utilization (TX)" },
+      "temperature": { "name": "Temperature" },
+      "relative_humidity": { "name": "Humidity" },
+      "barometric_pressure": { "name": "Pressure" },
+      "snr": { "name": "SNR" }
+    },
+    "binary_sensor": {
+      "connectivity": { "name": "Connectivity" }
+    }
+  }
+}
