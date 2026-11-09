@@ -8,6 +8,12 @@
   <a href="https://opensource.org/licenses/MIT">
     <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
   </a>
+  <a href="https://github.com/maxhayim/meshmonitor-bridge-homeassistant/releases">
+    <img src="https://img.shields.io/badge/Release-v3.0.0-orange" alt="Release">
+  </a>
+  <a href="https://github.com/maxhayim/meshmonitor-bridge-homeassistant/actions/workflows/tests.yml">
+    <img src="https://github.com/maxhayim/meshmonitor-bridge-homeassistant/actions/workflows/tests.yml/badge.svg" alt="Tests">
+  </a>
 </p>
 
 # 🏘️ Homeassistant Bridge
@@ -38,7 +44,12 @@ No direct radio transmission.
  
 ### Home Assistant → MeshMonitor
  
-Subscribes to Home Assistant state_changed events over the official WebSocket API and publishes normalized MQTT messages.
+On connect, publishes a one-time snapshot of every current entity state, then
+subscribes to Home Assistant state_changed events over the official
+WebSocket API and publishes normalized MQTT messages as they happen. The
+subscription is established before the snapshot is requested, so no event in
+between is ever missed. Use `STATE_DOMAIN_FILTER_REGEX` / `STATE_ENTITY_FILTER_REGEX`
+to limit both the snapshot and the live stream to a subset of entities.
  
 Example topic:
  
@@ -94,8 +105,11 @@ The bridge:
     ├── Dockerfile                            # Container build
     ├── docker-compose.yml                    # Container deployment
     ├── .dockerignore
+    ├── tests/                                # pytest suite (logic + mocked MQTT/WS)
+    ├── requirements-dev.txt                  # Test-only dependencies
     ├── .github/workflows/
-    │   └── docker-publish.yml                # Multi-arch GHCR build + publish
+    │   ├── docker-publish.yml                # Multi-arch GHCR build + publish
+    │   └── tests.yml                         # pytest on push/PR
     ├── docs/assets/                          # Logo and documentation images
     └── README.md
  
@@ -247,10 +261,54 @@ Published on a timer (`HEARTBEAT_SECONDS`, default 30s), retained:
     meshmonitor/homeassistant/version
  
 Override with `STATUS_TOPIC` and `VERSION_TOPIC`.
+
+### Availability
+
+Retained, set via MQTT Last Will and Testament so a crash or unplugged
+bridge is reflected immediately (not just after a heartbeat gap):
+
+    meshmonitor/homeassistant/available
+
+Payload is the plain string `online` or `offline` (not JSON), matching Home
+Assistant's MQTT availability-topic convention. Override with `AVAILABILITY_TOPIC`.
  
 ---
  
 ## Command Safety
+
+**As of v3.0.0, command execution is default-deny.** `ENABLE_COMMANDS=true` is
+not enough by itself — `ALLOW_DOMAIN_REGEX`, `ALLOW_SERVICE_REGEX`, **and**
+`ALLOW_ENTITY_REGEX` must *all three* be set, or every command is rejected.
+In prior versions, leaving `ALLOW_ENTITY_REGEX` empty let any entity through
+as long as domain/service matched — that was a real gap, not a supported
+"no restriction" mode, and it's closed now. See
+[Migration Notes](#migration-notes-v2x--v300) if you're upgrading.
+
+`ALLOW_DOMAIN_REGEX` and `ALLOW_SERVICE_REGEX` must match the *entire* value
+(`re.fullmatch`), so an unanchored pattern like `light` can no longer match a
+substring such as domain `lighting_rig`. `ALLOW_ENTITY_REGEX` stays a prefix
+match (`re.search`), so one pattern below still covers every entity under a domain.
+
+**Every target entity is validated, not just the first.** A command with
+`"entity_id": ["light.porch", "climate.furnace"]` is rejected outright if
+*any* entry fails the allowlist — it does not silently act on the ones that pass.
+
+**Area, device, and label targeting is rejected by default.** Home
+Assistant's `target` object can address a whole area, device, or label
+instead of (or alongside) `entity_id`; none of those are checked against
+`ALLOW_ENTITY_REGEX`, so they're refused unless you set
+`ALLOW_TARGET_AREA_DEVICE_LABEL=true` (advanced/trusted use — it only stops
+blocking the target type, it does not add an allowlist for it).
+
+**Additional protections**, all configurable, 0 disables:
+
+    MAX_COMMAND_PAYLOAD_BYTES=8192
+    COMMAND_RATE_LIMIT_PER_MINUTE=60
+    COMMAND_DEDUP_WINDOW_SECONDS=60   # rejects a repeated request_id seen within this window
+
+Allowed and denied commands are logged (domain/service/entity targets and
+`request_id`) for audit purposes — never the raw payload or any Home
+Assistant credential.
  
 Commands are protected by allowlists:
  
@@ -277,7 +335,9 @@ Core:
     MQTT_USERNAME=
     MQTT_PASSWORD=
     MQTT_TLS=false
- 
+    MQTT_CLIENT_ID= (default: mm-ha-<slugified HA_URL>, stable across restarts)
+    MQTT_CMD_QUEUE_MAXSIZE=500
+
 Topics:
  
     TOPIC_ROOT=meshmonitor/homeassistant
@@ -287,6 +347,7 @@ Topics:
     ERROR_TOPIC= (default: {TOPIC_ROOT}/cmd/error)
     STATUS_TOPIC= (default: {TOPIC_ROOT}/status)
     VERSION_TOPIC= (default: {TOPIC_ROOT}/version)
+    AVAILABILITY_TOPIC= (default: {TOPIC_ROOT}/available)
  
 Behavior:
  
@@ -294,12 +355,37 @@ Behavior:
     ENABLE_ALERT_TOPICS=true
     ENABLE_COMMANDS=false
     HEARTBEAT_SECONDS=30
- 
+    LOW_BATTERY_THRESHOLD=20          # numeric sensor.* battery %, crossing-only; set negative to disable
+    STATE_DOMAIN_FILTER_REGEX=        # optional, only publish matching domains
+    STATE_ENTITY_FILTER_REGEX=        # optional, only publish matching entity_ids
+
 Security:
  
     ALLOW_DOMAIN_REGEX=
     ALLOW_SERVICE_REGEX=
     ALLOW_ENTITY_REGEX=
+    ALLOW_TARGET_AREA_DEVICE_LABEL=false
+    MAX_COMMAND_PAYLOAD_BYTES=8192
+    COMMAND_RATE_LIMIT_PER_MINUTE=60
+    COMMAND_DEDUP_WINDOW_SECONDS=60
+ 
+---
+ 
+## Migration Notes (v2.x → v3.0.0)
+
+This is a security-hardening release with one breaking behavior change:
+
+**`ENABLE_COMMANDS=true` now requires `ALLOW_ENTITY_REGEX` to be set.** If you
+were running with `ALLOW_DOMAIN_REGEX`/`ALLOW_SERVICE_REGEX` set but
+`ALLOW_ENTITY_REGEX` empty, every command will start being rejected (logged,
+published to the error topic) instead of silently passing with no
+entity-level restriction. Set `ALLOW_ENTITY_REGEX` to the entity prefixes you
+intend to allow (see [Command Safety](#command-safety)) to restore command
+execution — scoped, this time, to the entities you actually meant to expose.
+
+Everything else in v3.0.0 is additive and backward compatible: existing MQTT
+topics, payload shapes, and all other environment variables keep their prior
+defaults and behavior.
  
 ---
  
@@ -330,6 +416,34 @@ Home Assistant remains the authority for device control.
 MeshMonitor remains the transport layer.
 Homeassistant Bridge simply connects them.
  
+---
+
+## Testing
+
+    pip install -r requirements-dev.txt
+    pytest tests/ -v
+
+The suite covers command-allowlist edge cases (full entity-list validation,
+area/device/label denial, default-deny with no entity regex), low-battery
+threshold crossing/suppression, the single-reader WebSocket dispatch, and the
+thread-safe MQTT command queue — against mocked MQTT/WebSocket objects, not a
+live Home Assistant or MQTT broker.
+
+---
+
+## Known Limitations
+
+- One Home Assistant instance and one MeshMonitor MQTT broker per running
+  bridge process — multi-instance support is not yet implemented.
+- There is no native Home Assistant custom integration (`custom_components/`)
+  yet; this is the standalone MQTT bridge only.
+- `ALLOW_TARGET_AREA_DEVICE_LABEL=true` does not validate *which* area,
+  device, or label was targeted — it only stops blocking that target type.
+  Only enable it if you trust everything publishing to the command topic.
+- Low-battery threshold detection only applies to numeric `sensor.*` entities
+  with `device_class: battery`; the existing binary `battery` device-class
+  alert (on `binary_sensor.*`) is unchanged.
+
 ---
  
 ## License

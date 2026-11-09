@@ -9,3 +9,7 @@ install.sh
 uninstall.sh
 __pycache__
 *.pyc
+.venv
+tests
+requirements-dev.txt
+.pytest_cache
