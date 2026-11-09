@@ -9,7 +9,7 @@
     <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
   </a>
   <a href="https://github.com/maxhayim/meshmonitor-bridge-homeassistant/releases">
-    <img src="https://img.shields.io/badge/Release-v3.0.1-orange" alt="Release">
+    <img src="https://img.shields.io/badge/Release-v3.0.2-orange" alt="Release">
   </a>
   <a href="https://github.com/maxhayim/meshmonitor-bridge-homeassistant/actions/workflows/tests.yml">
     <img src="https://github.com/maxhayim/meshmonitor-bridge-homeassistant/actions/workflows/tests.yml/badge.svg" alt="Tests">
