@@ -515,7 +515,7 @@ repository in HACS, then install "MeshMonitor" from there.
     pip install -r requirements-dev-integration.txt
     pytest tests/test_meshmonitor_integration/test_api.py -v
 
-    pip install -r requirements-dev.txt -r requirements-dev-ha.txt
+    pip install -r requirements-dev-ha.txt
     pytest tests/test_meshmonitor_integration/test_coordinator.py -v
 
 These two run in **separate environments on purpose**. `api.py` has no
