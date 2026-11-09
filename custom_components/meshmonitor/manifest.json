@@ -1,12 +1,12 @@
 {
   "domain": "meshmonitor",
   "name": "MeshMonitor",
+  "codeowners": ["@maxhayim"],
   "config_flow": true,
   "documentation": "https://github.com/maxhayim/meshmonitor-bridge-homeassistant#native-home-assistant-integration",
-  "issue_tracker": "https://github.com/maxhayim/meshmonitor-bridge-homeassistant/issues",
-  "codeowners": ["@maxhayim"],
-  "version": "0.1.0",
-  "iot_class": "local_polling",
   "integration_type": "hub",
-  "requirements": []
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/maxhayim/meshmonitor-bridge-homeassistant/issues",
+  "requirements": [],
+  "version": "0.1.0"
 }
