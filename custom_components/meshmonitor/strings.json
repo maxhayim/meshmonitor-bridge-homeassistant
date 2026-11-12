@@ -18,6 +18,14 @@
         "data": {
           "api_token": "API token"
         }
+      },
+      "zeroconf_confirm": {
+        "title": "MeshMonitor discovered",
+        "description": "Found a MeshMonitor instance at `{host}:{port}` advertised by its companion bridge script. Generate an API token from MeshMonitor's own web UI under User Settings, then paste it here.",
+        "data": {
+          "api_token": "API token",
+          "name": "Name (optional)"
+        }
       }
     },
     "error": {
@@ -27,7 +35,8 @@
     },
     "abort": {
       "already_configured": "This MeshMonitor instance is already configured.",
-      "reauth_successful": "Re-authentication was successful."
+      "reauth_successful": "Re-authentication was successful.",
+      "already_in_progress": "This MeshMonitor instance is already being configured."
     }
   },
   "options": {
@@ -42,20 +51,44 @@
   },
   "entity": {
     "sensor": {
-      "node_count": { "name": "Node count" },
-      "channel_count": { "name": "Channel count" },
-      "last_update": { "name": "Last update" },
-      "battery_level": { "name": "Battery" },
-      "voltage": { "name": "Voltage" },
-      "channel_utilization": { "name": "Channel utilization" },
-      "air_util_tx": { "name": "Air utilization (TX)" },
-      "temperature": { "name": "Temperature" },
-      "relative_humidity": { "name": "Humidity" },
-      "barometric_pressure": { "name": "Pressure" },
-      "snr": { "name": "SNR" }
+      "node_count": {
+        "name": "Node count"
+      },
+      "channel_count": {
+        "name": "Channel count"
+      },
+      "last_update": {
+        "name": "Last update"
+      },
+      "battery_level": {
+        "name": "Battery"
+      },
+      "voltage": {
+        "name": "Voltage"
+      },
+      "channel_utilization": {
+        "name": "Channel utilization"
+      },
+      "air_util_tx": {
+        "name": "Air utilization (TX)"
+      },
+      "temperature": {
+        "name": "Temperature"
+      },
+      "relative_humidity": {
+        "name": "Humidity"
+      },
+      "barometric_pressure": {
+        "name": "Pressure"
+      },
+      "snr": {
+        "name": "SNR"
+      }
     },
     "binary_sensor": {
-      "connectivity": { "name": "Connectivity" }
+      "connectivity": {
+        "name": "Connectivity"
+      }
     }
   }
 }

@@ -4,8 +4,8 @@ This integration is a separate, optional code path from the standalone
 ``meshmonitor_bridge_homeassistant.py`` MQTT bridge script shipped in this
 same repository. It talks directly to MeshMonitor's REST API
 (``/api/v1/...``) instead of MQTT, and is versioned independently
-(see manifest.json's "version" -- starts at 0.1.0, unrelated to the bridge
-script's own version number).
+(see manifest.json's "version", unrelated to the bridge script's own
+version number).
 """
 
 from __future__ import annotations

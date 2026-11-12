@@ -4,7 +4,7 @@ import re
 import sys
 import threading
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -376,3 +376,54 @@ async def test_command_consumer_rate_limit():
     errs = [json.loads(p) for t, p, _ in client.published if t == "err"]
     assert len(acks) == 1
     assert any("rate limit" in e["error"] for e in errs)
+
+
+# ============================================================
+# Zeroconf self-advertisement
+# ============================================================
+
+@pytest.mark.asyncio
+async def test_zeroconf_advertisement_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("MESHMONITOR_ADVERTISE", raising=False)
+    assert await bridge.start_zeroconf_advertisement() is None
+
+
+@pytest.mark.asyncio
+async def test_zeroconf_advertisement_skips_without_host(monkeypatch):
+    monkeypatch.setenv("MESHMONITOR_ADVERTISE", "true")
+    monkeypatch.delenv("MESHMONITOR_HOST", raising=False)
+    assert await bridge.start_zeroconf_advertisement() is None
+
+
+@pytest.mark.asyncio
+async def test_zeroconf_advertisement_registers_service_without_token(monkeypatch):
+    monkeypatch.setenv("MESHMONITOR_ADVERTISE", "true")
+    monkeypatch.setenv("MESHMONITOR_HOST", "192.0.2.10")
+    monkeypatch.setenv("MESHMONITOR_PORT", "9090")
+    monkeypatch.setenv("MESHMONITOR_SCHEME", "https")
+
+    fake_azc = MagicMock()
+    fake_azc.async_register_service = AsyncMock()
+    fake_azc.async_unregister_service = AsyncMock()
+    fake_azc.async_close = AsyncMock()
+
+    with patch("zeroconf.asyncio.AsyncZeroconf", return_value=fake_azc):
+        handle = await bridge.start_zeroconf_advertisement()
+
+    assert handle is not None
+    fake_azc.async_register_service.assert_awaited_once()
+    registered_info = fake_azc.async_register_service.await_args.args[0]
+    assert registered_info.port == 9090
+    properties = {k.decode(): v.decode() for k, v in registered_info.properties.items()}
+    assert properties == {"host": "192.0.2.10", "port": "9090", "scheme": "https"}
+    assert "token" not in properties
+    assert "api_token" not in properties
+
+    await bridge.stop_zeroconf_advertisement(handle)
+    fake_azc.async_unregister_service.assert_awaited_once_with(registered_info)
+    fake_azc.async_close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stop_zeroconf_advertisement_handles_none():
+    await bridge.stop_zeroconf_advertisement(None)  # should not raise

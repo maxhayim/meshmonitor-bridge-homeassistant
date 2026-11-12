@@ -24,6 +24,16 @@ jobs:
   coordinator:
     # Needs real Home Assistant core objects (ConfigEntry, DataUpdateCoordinator,
     # the `hass` test fixture) via pytest-homeassistant-custom-component.
+    #
+    # --asyncio-mode=auto is required here, not optional: pytest-homeassistant-
+    # custom-component's `hass` fixture is a plain @pytest.fixture wrapping an
+    # async generator, not a @pytest_asyncio.fixture. Under pytest-asyncio's
+    # default "strict" mode that fixture is never awaited at all -- pytest
+    # hands the test a raw, unresolved async_generator object instead of a
+    # real hass instance. This was latent and invisible in test_coordinator.py
+    # (its tests pass hass through without dereferencing it deeply enough to
+    # notice); test_config_flow.py's `hass.config_entries.flow...` calls
+    # surfaced it immediately.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,4 +41,4 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev-ha.txt
-      - run: python -m pytest tests/test_meshmonitor_integration/test_coordinator.py -v
+      - run: python -m pytest tests/test_meshmonitor_integration/test_coordinator.py tests/test_meshmonitor_integration/test_config_flow.py -v --asyncio-mode=auto

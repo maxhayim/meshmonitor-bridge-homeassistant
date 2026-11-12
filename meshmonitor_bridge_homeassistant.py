@@ -4,7 +4,7 @@
 #   emoji: 🏘️
 #   language: Python
 #   description: Bidirectional Home Assistant ↔ MeshMonitor bridge via MQTT (state events + command execution) with MQTT health heartbeat.
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 
 import asyncio
 import json
@@ -751,6 +751,96 @@ async def _connection_loop(
 
 
 # ============================================================
+# Zeroconf Self-Advertisement (optional)
+# ============================================================
+
+ZEROCONF_SERVICE_TYPE = "_meshmonitor-ha._tcp.local."
+
+
+async def start_zeroconf_advertisement() -> Optional[Tuple[Any, Any]]:
+    """Advertise a MeshMonitor instance over mDNS, if configured.
+
+    MeshMonitor itself has no Zeroconf/mDNS support (verified against its
+    source: no match for zeroconf/mdns/bonjour/avahi anywhere in the repo).
+    The operator already runs this bridge alongside MeshMonitor, so the
+    bridge is what advertises on its behalf -- letting the companion
+    native Home Assistant integration's config flow discover host/port
+    instead of the user typing them in by hand.
+
+    Opt-in via MESHMONITOR_ADVERTISE=true; off by default since mDNS is
+    unauthenticated LAN broadcast traffic some operators won't want. The
+    API token is never advertised -- only host/port/scheme, which are not
+    secret.
+
+    Returns an opaque handle for stop_zeroconf_advertisement(), or None if
+    advertisement is disabled or misconfigured (logged as a warning, not
+    fatal -- the bridge's core HA<->MQTT function doesn't depend on this).
+    """
+    if not env_bool("MESHMONITOR_ADVERTISE", False):
+        return None
+
+    host = os.getenv("MESHMONITOR_HOST", "").strip()
+    if not host:
+        logging.warning(
+            "MESHMONITOR_ADVERTISE is true but MESHMONITOR_HOST is not set; "
+            "skipping mDNS advertisement"
+        )
+        return None
+
+    try:
+        import socket
+        from zeroconf import ServiceInfo
+        from zeroconf.asyncio import AsyncZeroconf
+    except ImportError:
+        logging.warning(
+            "MESHMONITOR_ADVERTISE is true but the 'zeroconf' package is not "
+            "installed; skipping mDNS advertisement"
+        )
+        return None
+
+    port = env_int("MESHMONITOR_PORT", 8080)
+    scheme = os.getenv("MESHMONITOR_SCHEME", "http").strip() or "http"
+    instance_name = os.getenv("MESHMONITOR_INSTANCE_NAME", "").strip() or slug(host)
+
+    try:
+        address = socket.inet_aton(socket.gethostbyname(host))
+    except OSError:
+        logging.warning(
+            "MESHMONITOR_ADVERTISE: could not resolve MESHMONITOR_HOST=%r; "
+            "skipping mDNS advertisement", host
+        )
+        return None
+
+    info = ServiceInfo(
+        ZEROCONF_SERVICE_TYPE,
+        f"{instance_name}.{ZEROCONF_SERVICE_TYPE}",
+        addresses=[address],
+        port=port,
+        properties={"host": host, "port": str(port), "scheme": scheme},
+    )
+
+    azc = AsyncZeroconf()
+    await azc.async_register_service(info)
+    logging.info(
+        "Advertising MeshMonitor at %s://%s:%s over mDNS as %s",
+        scheme, host, port, info.name,
+    )
+    return (azc, info)
+
+
+async def stop_zeroconf_advertisement(handle: Optional[Tuple[Any, Any]]) -> None:
+    if handle is None:
+        return
+    azc, info = handle
+    try:
+        await azc.async_unregister_service(info)
+    except Exception:
+        pass
+    finally:
+        await azc.async_close()
+
+
+# ============================================================
 # Main Bridge
 # ============================================================
 
@@ -808,6 +898,8 @@ async def run_bridge() -> int:
     # Start heartbeat (retained status/version)
     asyncio.create_task(heartbeat_task(client, heartbeat_seconds, status_topic, version_topic))
 
+    zc_handle = await start_zeroconf_advertisement()
+
     logging.info("homeassistant-bridge v%s starting (ws=%s)", __version__, ws_url)
 
     shutdown_event = asyncio.Event()
@@ -843,6 +935,7 @@ async def run_bridge() -> int:
             await main_task
         except Exception:
             pass
+        await stop_zeroconf_advertisement(zc_handle)
         try:
             client.publish(avail_topic, "offline", retain=True)
             client.loop_stop()
@@ -856,6 +949,7 @@ async def run_bridge() -> int:
         await main_task
     except Exception:
         pass
+    await stop_zeroconf_advertisement(zc_handle)
     return 1
 
 
