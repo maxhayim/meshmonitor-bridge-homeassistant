@@ -9,7 +9,7 @@
     <img src="https://img.shields.io/badge/License-MIT-green" alt="License">
   </a>
   <a href="https://github.com/maxhayim/meshmonitor-bridge-homeassistant/releases">
-    <img src="https://img.shields.io/badge/Release-v3.1.0-orange" alt="Release">
+    <img src="https://img.shields.io/badge/Release-v3.2.0-orange" alt="Release">
   </a>
   <a href="https://github.com/maxhayim/meshmonitor-bridge-homeassistant/actions/workflows/tests.yml">
     <img src="https://github.com/maxhayim/meshmonitor-bridge-homeassistant/actions/workflows/tests.yml/badge.svg" alt="Tests">
@@ -107,10 +107,10 @@ The bridge:
     ├── .dockerignore
     ├── tests/
     │   ├── test_bridge.py                    # MQTT bridge pytest suite (logic + mocked MQTT/WS)
-    │   └── test_meshmonitor_integration/     # Native integration pytest suite (api.py + coordinator.py)
+    │   └── test_meshmonitor_integration/     # Native integration pytest suite (api.py + coordinator.py + config_flow.py)
     ├── requirements-dev.txt                  # Test-only deps for the MQTT bridge suite
     ├── requirements-dev-integration.txt      # Test-only deps for custom_components/meshmonitor/api.py
-    ├── requirements-dev-ha.txt               # Test-only deps for coordinator.py (needs real Home Assistant core)
+    ├── requirements-dev-ha.txt               # Test-only deps for coordinator.py/config_flow.py (need real Home Assistant core)
     ├── custom_components/meshmonitor/        # Native HA integration (domain "meshmonitor"), see below
     ├── hacs.json                             # HACS custom-repository manifest
     ├── .github/workflows/
@@ -377,6 +377,15 @@ Security:
     MAX_COMMAND_PAYLOAD_BYTES=8192
     COMMAND_RATE_LIMIT_PER_MINUTE=60
     COMMAND_DEDUP_WINDOW_SECONDS=60
+
+mDNS discovery (optional, off by default -- see
+[Zeroconf Discovery](#zeroconf-discovery) below):
+
+    MESHMONITOR_ADVERTISE=false
+    MESHMONITOR_HOST=        # MeshMonitor's own host/IP (required if advertising)
+    MESHMONITOR_PORT=8080
+    MESHMONITOR_SCHEME=http
+    MESHMONITOR_INSTANCE_NAME= (default: slugified MESHMONITOR_HOST)
  
 ---
  
@@ -493,20 +502,49 @@ a HACS *custom* repository, but it has **not yet been submitted to the HACS
 default store**. Until then, add this repository's GitHub URL as a custom
 repository in HACS, then install "MeshMonitor" from there.
 
+### Zeroconf Discovery
+
+MeshMonitor itself advertises no Zeroconf/mDNS service at all (checked
+directly against its source). So instead, the standalone bridge script can
+*optionally* advertise a MeshMonitor instance on the operator's behalf,
+letting this integration's config flow discover host/port instead of the
+user typing them in by hand:
+
+1. On the machine running the bridge script, set:
+
+       MESHMONITOR_ADVERTISE=true
+       MESHMONITOR_HOST=<MeshMonitor's own host/IP>
+       MESHMONITOR_PORT=8080          # or whatever MeshMonitor actually listens on
+       MESHMONITOR_SCHEME=http
+
+2. Restart the bridge. It advertises a `_meshmonitor-ha._tcp.local.` mDNS
+   service carrying host/port/scheme (never the API token — mDNS is plain,
+   unauthenticated LAN broadcast, so the token always has to be entered by
+   hand regardless).
+3. In Home Assistant, a "MeshMonitor discovered" notification appears
+   under **Settings → Devices & Services**. Confirming it still prompts for
+   the API token, with host/port already filled in.
+
+This is entirely optional — manual setup (above) always works whether or
+not the bridge script is running at all, let alone advertising.
+
 ### Known limitations
 
 - No firmware-version or uptime sensors — neither field exists anywhere in
   MeshMonitor's Node or Telemetry API schema, so none are fabricated here.
-- No automatic discovery — MeshMonitor advertises no Zeroconf/mDNS service,
-  so setup is manual (host/port/scheme/token). Discovery is deferred to a
-  later phase.
+- Zeroconf discovery (above) requires the standalone bridge script to be
+  running alongside MeshMonitor with `MESHMONITOR_ADVERTISE=true` — an
+  unmodified MeshMonitor install by itself is never discoverable.
 - Each config entry's `unique_id` is a hash of (host, port, API token),
   since MeshMonitor's API exposes no documented stable instance identifier.
   Rotating the API token on the MeshMonitor side changes this hash; use the
   integration's reauth flow (triggered automatically once the stored token
   stops working) rather than removing and re-adding the integration.
 - Multiple MeshMonitor instances can each be added as their own config
-  entry, but there is no cross-instance dedup or auto-merge logic yet.
+  entry (this already works via Home Assistant's own per-domain multi-entry
+  support plus this integration's per-instance `unique_id`), but there is no
+  cross-instance dedup or auto-merge logic for e.g. recognizing the same
+  physical instance after its host *and* token both changed.
 - Read-only — it does not execute Home Assistant service calls or control
   devices; that remains the MQTT bridge's job via its command channel.
 
@@ -516,7 +554,7 @@ repository in HACS, then install "MeshMonitor" from there.
     pytest tests/test_meshmonitor_integration/test_api.py -v
 
     pip install -r requirements-dev-ha.txt
-    pytest tests/test_meshmonitor_integration/test_coordinator.py -v
+    pytest tests/test_meshmonitor_integration/test_coordinator.py tests/test_meshmonitor_integration/test_config_flow.py -v --asyncio-mode=auto
 
 These two run in **separate environments on purpose**. `api.py` has no
 `homeassistant.*` imports of its own, but importing it still pulls in
@@ -527,9 +565,20 @@ for the api-only tests. `pytest-homeassistant-custom-component` is not:
 that plugin installs a strict, session-wide thread-cleanup check that
 misfires on plain aiohttp/aioresponses tests merely by being installed in
 the same environment, regardless of whether a given test uses its `hass`
-fixture. The coordinator tests need that plugin's `hass` fixture, so they
-get their own environment instead. CI (`integration-tests.yml`) runs these
-as two separate jobs for the same reason.
+fixture. The coordinator and config-flow tests need that plugin's `hass`
+fixture, so they get their own environment instead. CI
+(`integration-tests.yml`) runs these as two separate jobs for the same
+reason.
+
+**`--asyncio-mode=auto` is required**, not optional, for the second command.
+`pytest-homeassistant-custom-component`'s `hass` fixture is a plain
+`@pytest.fixture` wrapping an async generator rather than a
+`@pytest_asyncio.fixture`; under pytest-asyncio's default "strict" mode,
+that fixture is never actually awaited — tests silently receive a raw,
+unresolved `async_generator` object instead of a real `hass` instance, with
+no error raised. The original `test_coordinator.py` tests happened
+to pass anyway (they never dereference `hass` deeply enough to notice);
+`test_config_flow.py`'s `hass.config_entries.flow...` calls surfaced it.
 
 ---
 

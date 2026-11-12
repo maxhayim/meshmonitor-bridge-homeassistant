@@ -11,3 +11,6 @@
 #   pytest tests/test_meshmonitor_integration/test_coordinator.py -v
 homeassistant>=2024.11.0
 pytest-homeassistant-custom-component
+# Imported transitively by homeassistant.components.zeroconf, which
+# ZeroconfServiceInfo (used by config_flow.py's discovery step) lives in.
+zeroconf>=0.130.0
